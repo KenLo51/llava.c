@@ -1,0 +1,698 @@
+#include "phi3.h"
+
+// Instantiation and cleanup functions
+void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
+    if(!phi3_config || !ctx){
+        fprintf(stderr, "NULL pointer passed to load_phi3_config_from_gguf\n");
+        exit(EXIT_FAILURE);
+    }
+
+    gguf_metadata_kv* kv = NULL;
+
+    // dim, transformer dimension
+    kv = gguf_get_metadata(ctx, "phi3.embedding_length");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.embedding_length from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->dim = kv->value.uint32;
+#ifdef DEBUG
+    printf("Loaded phi3.dim = %d\n", phi3_config->dim);
+#endif
+
+    // hidden_dim, for ffn layers
+    kv = gguf_get_metadata(ctx, "phi3.feed_forward_length");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.feed_forward_length from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->hidden_dim = kv->value.uint32;
+#ifdef DEBUG
+    printf("Loaded phi3.hidden_dim = %d\n", phi3_config->hidden_dim);
+#endif
+    // n_layers, number of layers
+    kv = gguf_get_metadata(ctx, "phi3.block_count");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.block_count from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->n_layers = kv->value.uint32;
+#ifdef DEBUG
+    printf("Loaded phi3.n_layers = %d\n", phi3_config->n_layers);
+#endif
+    // n_heads, number of query heads
+    kv = gguf_get_metadata(ctx, "phi3.attention.head_count");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.attention.head_count from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->n_heads = kv->value.uint32;
+#ifdef DEBUG
+    printf("Loaded phi3.n_heads = %d\n", phi3_config->n_heads);
+#endif
+    // n_kv_heads, number of key/value heads (can be < query heads because of multiquery)
+    kv = gguf_get_metadata(ctx, "phi3.attention.head_count_kv");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.attention.head_count_kv from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->n_kv_heads = kv->value.uint32;
+#ifdef DEBUG
+    printf("Loaded phi3.n_kv_heads = %d\n", phi3_config->n_kv_heads);
+#endif
+    // vocab_size, vocabulary size, usually 256 (byte-level)
+    kv = gguf_get_metadata(ctx, "tokenizer.ggml.tokens");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.vocab_size from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->vocab_size = ((gguf_array*)(kv->value.arr))->len;
+#ifdef DEBUG
+    printf("Loaded phi3.vocab_size = %d\n", phi3_config->vocab_size);
+#endif
+    // seq_len, max sequence length
+    kv = gguf_get_metadata(ctx, "phi3.context_length");
+    if(!kv){
+        fprintf(stderr, "Failed to get phi3.context_length from GGUF metadata\n");
+        exit(EXIT_FAILURE);
+    }
+    phi3_config->seq_len = kv->value.uint32;
+#ifdef DEBUG
+    printf("Loaded phi3.seq_len = %d\n", phi3_config->seq_len);
+#endif
+}
+
+void copy_tensor_data_to_float_array(gguf_tensor* tensor, float* dest_array){
+    if(!tensor || !dest_array){
+        fprintf(stderr, "NULL pointer passed to copy_tensor_data_to_float_array\n");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t n_elements = tensor->n_elements;
+    ggml_type type = tensor->type;
+    uint8_t* data_ptr = (uint8_t*)tensor->data;
+
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < n_elements; i++) {
+        dest_array[i] = ggml_type_to_float(type, data_ptr + i * ggml_type_size(type));
+    }
+}
+void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights, gguf_context* ctx){
+    if(!phi3_weights || !ctx){
+        fprintf(stderr, "NULL pointer passed to load_phi3_weights_from_gguf\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Allocate memory for all weights
+    phi3_weights->token_embedding_table = (float*)malloc(sizeof(float) * config->vocab_size * config->dim);
+    phi3_weights->rms_att_weight = (float*)malloc(sizeof(float) * config->n_layers * config->dim);
+    phi3_weights->rms_ffn_weight = (float*)malloc(sizeof(float) * config->n_layers * config->dim);
+    phi3_weights->wqkv = (float*)malloc(sizeof(float) * config->n_layers * config->dim * 3 * config->dim);
+    phi3_weights->wo = (float*)malloc(sizeof(float) * config->n_layers * config->dim * config->dim);
+    phi3_weights->w_up = (float*)malloc(sizeof(float) * config->n_layers * 2 * config->hidden_dim * config->dim);
+    phi3_weights->w_down = (float*)malloc(sizeof(float) * config->n_layers * config->dim * config->hidden_dim);
+    phi3_weights->rms_final_weight = (float*)malloc(sizeof(float) * config->dim);
+    phi3_weights->wcls = (float*)malloc(sizeof(float) * config->vocab_size * config->dim);
+    
+    // check mallocs
+    if(!phi3_weights->token_embedding_table || !phi3_weights->rms_att_weight
+        || !phi3_weights->rms_ffn_weight || !phi3_weights->wqkv
+        || !phi3_weights->wo || !phi3_weights->w_up
+        || !phi3_weights->w_down || !phi3_weights->rms_final_weight
+        || !phi3_weights->wcls){
+        fprintf(stderr, "Failed to allocate memory for Phi3 weights\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Iterate over tensors in GGUF and load weights
+    for(unsigned int i=0; i<ctx->tensor_count; i++){
+        gguf_tensor* tensor = &ctx->tensors[i];
+
+#ifdef DEBUG
+        printf("Processing tensor: %s\n", tensor->name);
+#endif
+        
+        // input and output embeddings
+        if(strcmp(tensor->name, "token_embd.weight") == 0){
+            copy_tensor_data_to_float_array(tensor, phi3_weights->token_embedding_table);
+        }
+        else if(strcmp(tensor->name, "output_norm.weight") == 0){
+            copy_tensor_data_to_float_array(tensor, phi3_weights->rms_final_weight);
+        }
+        else if(strcmp(tensor->name, "output.weight") == 0){
+            copy_tensor_data_to_float_array(tensor, phi3_weights->wcls);
+        }
+        // transformer blocks
+        else if(strncmp(tensor->name, "blk.", 4) == 0){
+            int layer_index = -1;
+            // Extract layer index
+            if (sscanf(tensor->name, "blk.%d.", &layer_index) != 1 || layer_index < 0 || layer_index >= config->n_layers) {
+                fprintf(stderr, "Failed to extract valid layer index from tensor name: %s\n", tensor->name);
+                continue;
+            }
+            // ffn_norm
+            if(strstr(tensor->name, "ffn_norm.weight")){
+                copy_tensor_data_to_float_array(tensor, 
+                    &phi3_weights->rms_ffn_weight[layer_index * config->dim]);
+            }
+            // attn_qkv
+            if(strstr(tensor->name, "attn_qkv.weight")){
+                copy_tensor_data_to_float_array(tensor, 
+                    &phi3_weights->wqkv[layer_index * config->dim * 3 * config->dim]);
+            }
+            // attn_output
+            if(strstr(tensor->name, "attn_output.weight")){
+                copy_tensor_data_to_float_array(tensor, 
+                    &phi3_weights->wo[layer_index * config->dim * config->dim]);
+            }
+            // attn_norm
+            if(strstr(tensor->name, "attn_norm.weight")){
+                copy_tensor_data_to_float_array(tensor, 
+                    &phi3_weights->rms_att_weight[layer_index * config->dim]);
+            }
+            // ffn_up
+            if(strstr(tensor->name, "ffn_up.weight")){
+                copy_tensor_data_to_float_array(tensor, 
+                    &phi3_weights->w_up[layer_index * 2 * config->hidden_dim * config->dim]);
+            }
+            // ffn_down
+            if(strstr(tensor->name, "ffn_down.weight")){
+                copy_tensor_data_to_float_array(tensor, 
+                    &phi3_weights->w_down[layer_index * config->dim * config->hidden_dim]);
+            }
+        }
+
+        else {
+            fprintf(stderr, "Unrecognized tensor name in GGUF: %s\n", tensor->name);
+            // exit(EXIT_FAILURE);
+        }
+    }
+}
+Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx){
+    Phi3_Transformer* phi3 = (Phi3_Transformer*)calloc(1, sizeof(Phi3_Transformer));
+    if(!phi3){
+        fprintf(stderr, "Failed to allocate memory for Phi3_Transformer\n");
+        exit(EXIT_FAILURE);
+    }
+    load_phi3_config_from_gguf(&phi3->config, ctx);
+    load_phi3_weights_from_gguf(&phi3->config, &phi3->weights, ctx);
+
+    return phi3;
+}
+void delete_phi3_transformer(Phi3_Transformer* phi3){
+    if(phi3){
+        free(phi3->weights.token_embedding_table);
+        free(phi3->weights.rms_att_weight);
+        free(phi3->weights.rms_ffn_weight);
+        free(phi3->weights.wqkv);
+        free(phi3->weights.wo);
+        free(phi3->weights.w_up);
+        free(phi3->weights.w_down);
+        free(phi3->weights.rms_final_weight);
+        free(phi3->weights.wcls);
+
+        free(phi3->state.x);
+        free(phi3->state.xb);
+        free(phi3->state.xb2);
+        free(phi3->state.hb);
+        free(phi3->state.hb2);
+        free(phi3->state.q);
+        free(phi3->state.k);
+        free(phi3->state.v);
+        free(phi3->state.att);
+        free(phi3->state.logits);
+        free(phi3->state.key_cache);
+        free(phi3->state.value_cache);
+
+        free(phi3);
+    }
+}
+
+void malloc_run_state(Phi3_RunState* s, Phi3_Config* p) {
+    // we calloc instead of malloc to keep valgrind happy
+    s->x = calloc(p->dim, sizeof(float));
+    s->xb = calloc(p->dim, sizeof(float));
+    s->xb2 = calloc(p->dim, sizeof(float));
+    s->hb = calloc(2 * p->hidden_dim, sizeof(float));
+    s->hb2 = calloc(p->hidden_dim, sizeof(float));
+    s->q = calloc(p->dim, sizeof(float));
+    s->k = calloc(p->dim, sizeof(float));
+    s->v = calloc(p->dim, sizeof(float));
+    s->key_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
+    s->value_cache = calloc(p->n_layers * p->seq_len * p->dim, sizeof(float));
+    s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
+    s->logits = calloc(p->vocab_size, sizeof(float));
+    // ensure all mallocs went fine
+    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q || !s->k || !s->v
+     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
+        fprintf(stderr, "malloc failed!\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Inference functions
+void phi3_rotary_embedding_inplace(float* x, int dim, int head_dim, int pos) {
+    int half_dim = head_dim / 2;
+    int num_heads = dim / head_dim;
+
+    // 1. Iterate over each head
+    int h;
+    #pragma omp parallel for private(h)
+    for (h = 0; h < num_heads; h++) {
+        
+        // 
+        float* current_head_ptr = x + h * head_dim;
+
+        // 2. Apply RoPE to each pair within the head
+        for (int i = 0; i < half_dim; i++) {
+            // calculate the rotary embedding factors
+            float freq_exponent = (2.0f * i) / (float)head_dim;
+            float freq = 1.0f / powf(10000.0f, freq_exponent);
+            
+            float val = pos * freq;
+            float fcr = cosf(val);
+            float fci = sinf(val);
+
+
+            float v0 = current_head_ptr[i];            // x1
+            float v1 = current_head_ptr[i + half_dim]; // x2
+            
+            // perform the rotation
+            // x1_new = x1 * cos - x2 * sin
+            // x2_new = x2 * cos + x1 * sin
+            current_head_ptr[i]            = v0 * fcr - v1 * fci;
+            current_head_ptr[i + half_dim] = v1 * fcr + v0 * fci;
+        }
+    }
+}
+
+void phi3_rotary_embedding(float* out, float* in, int dim, int head_dim, int pos) {
+    // RoPE: Rotary Position Embedding (separate output version)
+    int half_dim = head_dim / 2;
+    int num_heads = dim / head_dim;
+
+    // 1. Iterate over each head
+    for (int h = 0; h < num_heads; h++) {
+        
+        // 
+        float* in_head_ptr = in + h * head_dim;
+        float* out_head_ptr = out + h * head_dim;
+
+        // 2. Apply RoPE to each pair within the head
+        for (int i = 0; i < half_dim; i++) {
+            // calculate the rotary embedding factors
+            float freq_exponent = (2.0f * i) / (float)head_dim;
+            float freq = 1.0f / powf(10000.0f, freq_exponent);
+            
+            float val = pos * freq;
+            float fcr = cosf(val);
+            float fci = sinf(val);
+
+
+            float v0 = in_head_ptr[i];            // x1
+            float v1 = in_head_ptr[i + half_dim]; // x2
+            
+            // perform the rotation
+            // x1_new = x1 * cos - x2 * sin
+            // x2_new = x2 * cos + x1 * sin
+            out_head_ptr[i]            = v0 * fcr - v1 * fci;
+            out_head_ptr[i + half_dim] = v1 * fcr + v0 * fci;
+        }
+    }
+}
+
+void phi3_feed_forward(Phi3_Transformer* phi3, int layer_index){
+    Phi3_RunState* state = &phi3->state;
+    Phi3_Weights* weights = &phi3->weights;
+    float* weight_up = &weights->w_up[layer_index * 2 * phi3->config.hidden_dim * phi3->config.dim];
+    float* weight_down = &weights->w_down[layer_index * phi3->config.dim * phi3->config.hidden_dim];
+    int dim = phi3->config.dim;
+    int hidden_dim = phi3->config.hidden_dim;
+
+    // up_states = self.gate_up_proj(hidden_states)
+    matmul(state->hb, state->xb, weight_up, dim, 2*hidden_dim);
+
+    // gate, up_states = up_states.chunk(2, dim=-1)
+    // up_states = up_states * self.activation_fn(gate) (SiLUActivation)
+    // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < hidden_dim; i++) {
+        state->hb[i] = state->hb[i] / (1.0f + expf(-state->hb[i]));
+        state->hb2[i] = state->hb[i] * state->hb[i+hidden_dim];
+    }
+
+    // out = self.down_proj(up_states)
+    matmul(state->xb, state->hb2, weight_down, hidden_dim, dim);
+}
+
+void phi3_proj_qkv(float* q_out, float* k_out, float* v_out,
+                   float* in, float* weight_qkv,
+                   int dim) {
+// Project input vector into Q, K, V using a fused weight matrix.
+// Args:
+//   q_out: Output array for Query vector. size: (dim,)
+//   k_out: Output array for Key vector. size: (dim,)
+//   v_out: Output array for Value vector. size: (dim,)
+//   in: Input vector (size: dim)
+//   weight_qkv: Fused weight matrix for Q, K, V. size: (dim , 3 * dim )
+//   dim: Dimension of the input and query, key, value vectors.
+
+    // ----------------------------------------------------------------------
+    // 1. Calculate Query (Q)
+    // The first 'dim' rows of the fused matrix correspond to Q.
+    // Target Q size: [dim]
+    // ----------------------------------------------------------------------
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < dim; i++) {
+        float val = 0.0f;
+        // Point to the start of row 'i' in the weight matrix
+        float* w_row = weight_qkv + i * dim;
+        
+        // Dot product: weight_row . input_vector
+        for (int j = 0; j < dim; j++) {
+            val += w_row[j] * in[j];
+        }
+        
+        q_out[i] = val;
+    }
+
+
+    // Offset the weight pointer to skip past the Q weights.
+    // We have processed 'dim' rows, each of length 'dim'.
+    float* weight_k_start = weight_qkv + (dim * dim);
+
+    // ----------------------------------------------------------------------
+    // 2. Calculate Key (K)
+    // ----------------------------------------------------------------------
+    #pragma omp parallel for private(i)
+    for (i = 0; i < dim; i++) {
+        float val = 0.0f;
+        float* w_row = weight_k_start + i * dim;
+        
+        for (int j = 0; j < dim; j++) {
+            val += w_row[j] * in[j];
+        }
+        k_out[i] = val;
+    }
+
+    // Offset the weight pointer to skip past the K weights.
+    // We have processed 'dim' rows.
+    float* weight_v_start = weight_k_start + (dim * dim);
+
+    // ----------------------------------------------------------------------
+    // 3. Calculate Value (V)
+    // ----------------------------------------------------------------------
+    #pragma omp parallel for private(i)
+    for (i = 0; i < dim; i++) {
+        float val = 0.0f;
+        float* w_row = weight_v_start + i * dim;
+        
+        for (int j = 0; j < dim; j++) {
+            val += w_row[j] * in[j];
+        }
+        v_out[i] = val;
+    }
+}
+
+void phi3_attention_forward(Phi3_Transformer* phi3,
+                            int layer_index, int pos) {
+// Forward pass through self-attention layer with KV cache.
+
+    Phi3_Config* config = &phi3->config;
+    Phi3_RunState* state = &phi3->state;
+    Phi3_Weights* weights = &phi3->weights;
+    
+    int dim = config->dim;
+    int n_heads = config->n_heads;
+    int n_kv_heads = config->n_kv_heads;
+    int seq_len = config->seq_len;
+    
+    // Get layer-specific pointers
+    int loff = layer_index * seq_len * dim; // kv cache layer offset
+    float* hidden_state = state->xb;
+    float* key_cache = state->key_cache + loff;
+    float* value_cache = state->value_cache + loff;
+
+    float* weight_qkv = weights->wqkv + layer_index * dim * (3 * dim);
+    float* weight_o = weights->wo + layer_index * dim * dim;
+    
+    int head_size = dim / n_heads;
+    int kv_mul = n_heads / n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    
+    // Use state buffers instead of allocating temporary ones
+    float* q = state->q;
+    float* k = state->k;
+    float* v = state->v;
+    float* att = state->att;
+    float* xb = state->xb2; // Use xb2 as temporary buffer for attention output
+
+    // 1. project q, k, v using the fused QKV projection
+    phi3_proj_qkv(q, k, v, hidden_state, weight_qkv, dim);
+    
+    // Apply RoPE (Rotary Position Embedding) to q and k
+    phi3_rotary_embedding_inplace(q, dim, dim / n_heads, pos);
+    phi3_rotary_embedding_inplace(k, dim, dim / n_heads, pos);
+
+    // Store k and v in the cache at position pos
+    float* key_cache_pos = key_cache + pos * dim;
+    float* value_cache_pos = value_cache + pos * dim;
+    memcpy(key_cache_pos, k, dim * sizeof(float));
+    memcpy(value_cache_pos, v, dim * sizeof(float));
+    
+    // 2. attention scores (scaled dot-product)
+    // multihead attention. iterate over all heads
+    int h;
+    #pragma omp parallel for private(h)
+    for (h = 0; h < n_heads; h++) {
+        // get the query vector for this head
+        float* q_head = q + h * head_size;
+        // attention scores for this head
+        float* att_head = att + h * seq_len;
+        
+        // iterate over all timesteps, including the current one
+        for (int t = 0; t <= pos; t++) {
+            // get the key vector for this head and at this timestep
+            float* k_head = key_cache + t * dim + (h / kv_mul) * head_size;
+            // calculate the attention score as the dot product of q and k
+            float score = 0.0f;
+            for (int i = 0; i < head_size; i++) {
+                score += q_head[i] * k_head[i];
+            }
+            score /= sqrtf(head_size);
+            // save the score to the attention buffer
+            att_head[t] = score;
+        }
+
+        // 3. softmax the scores to get attention weights, from 0..pos inclusively
+        softmax_inplace(att_head, pos + 1);
+        
+        // 4. weighted sum of the values, store back into xb
+        float* xb_head = xb + h * head_size;
+        memset(xb_head, 0, head_size * sizeof(float));
+        for (int t = 0; t <= pos; t++) {
+            // get the value vector for this head and at this timestep
+            float* v_head = value_cache + t * dim + (h / kv_mul) * head_size;
+            // get the attention weight for this timestep
+            float a = att_head[t];
+            // accumulate the weighted value into xb
+            for (int i = 0; i < head_size; i++) {
+                xb_head[i] += a * v_head[i];
+            }
+        }
+    }
+    
+    // 5. final matmul to get the output of the attention
+    matmul(hidden_state, xb, weight_o, dim, dim);
+}
+
+void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
+                                int layer_index,
+                                int pos) {
+// Forward pass through a single decoder layer.
+// Using KV cache for masked self-attention.
+
+    
+    Phi3_Config* config = &phi3->config;
+    Phi3_Weights* weight = &phi3->weights;
+    Phi3_RunState* state = &phi3->state;
+    
+    int dim = config->dim;
+    int hidden_dim = config->hidden_dim;
+
+    // 1. attention layernorm (RMSNorm)
+    rmsnorm(state->xb, state->x, weight->rms_att_weight + layer_index * dim, dim);
+
+    // 2. self-attention with KV cache
+    phi3_attention_forward(phi3, layer_index, pos);
+    
+
+    // 3. residual connection
+    int i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < dim; i++) {
+        state->x[i] += state->xb[i];
+    }
+
+    // 4. ffn layernorm (RMSNorm)
+    rmsnorm(state->xb, state->x, weight->rms_ffn_weight + layer_index * dim, dim);
+
+    // 5. feed-forward network
+    phi3_feed_forward(phi3, layer_index);
+
+    // 6. residual connection
+    #pragma omp parallel for private(i)
+    for (i = 0; i < dim; i++) {
+        state->x[i] += state->xb[i];
+    }
+}
+
+float* phi3_forward(Phi3_Transformer* phi3, int token, int pos){
+// Forward pass with a new token
+
+    Phi3_Config* config = &phi3->config;
+    Phi3_Weights* weight = &phi3->weights;
+    Phi3_RunState* state = &phi3->state;
+    float* x = state->x;
+    int dim = config->dim;
+    
+    // 1. Embedding lookup
+    float* content_row = weight->token_embedding_table + token * dim;
+    memcpy(x, content_row, dim * sizeof(float));
+    
+    // 2. Forward all layers
+    for (int l = 0; l < config->n_layers; l++) {
+        phi3_decoder_layer_forward(phi3, l, pos);
+    }
+    
+    // 3. Final RMSNorm
+    rmsnorm_inplace(x, weight->rms_final_weight, dim);
+
+    // 4. Output projection to logits
+    matmul(state->logits, x, weight->wcls, dim, config->vocab_size);
+    
+    return state->logits;
+}
+
+char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen) {
+    char *empty_prompt = "";
+    if (prompt == NULL) { prompt = empty_prompt; }
+
+    // encode the (string) prompt into tokens sequence
+    int num_prompt_tokens = 0;
+    int* prompt_tokens = (int*)malloc(transformer->config.seq_len * sizeof(int));
+    encode(tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
+    if (num_prompt_tokens < 1) {
+        fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int* generated_tokens = (int*)malloc(max_tokens_gen * sizeof(int));
+    int generated_tokens_count = 0;
+    int token = prompt_tokens[0]; // kick off with the first token in the prompt
+    int pos = 0;     // position in the sequence
+    while (pos < max_tokens_gen) {
+
+        // forward the transformer to get logits for the next token
+        float* logits = phi3_forward(transformer, token, pos);
+
+        // advance the state machine
+        if (pos < num_prompt_tokens - 1) {
+            // if we are still processing the input prompt, force the next prompt token
+            next = prompt_tokens[pos + 1];
+        } else {
+            // otherwise sample the next token from the logits
+            next = sample(sampler, logits);
+        }
+        pos++;
+
+        // data-dependent terminating condition: the BOS (=1) token delimits sequences
+        if (next == 1) { break; }
+
+        // print the token as string, decode it with the Tokenizer object
+        // printf(" Predicted token %d: ", token);
+        if(pos > num_prompt_tokens){
+            generated_tokens[generated_tokens_count++] = next;
+            // char* piece = decode(tokenizer, &next, 1);
+            // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+        }
+        token = next;
+
+        if (next == tokenizer->eos_token) {
+            break;
+        }
+    }
+
+    free(prompt_tokens);
+
+    char* decoded_str = decode(tokenizer, generated_tokens, generated_tokens_count, NULL);
+    free(generated_tokens);
+
+    return decoded_str;
+}
+
+void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t)) {
+    char *empty_prompt = "";
+    if (prompt == NULL) { prompt = empty_prompt; }
+
+    // encode the (string) prompt into tokens sequence
+    int num_prompt_tokens = 0;
+    int* prompt_tokens = (int*)malloc(transformer->config.seq_len * sizeof(int));
+    encode(tokenizer, prompt, prompt_tokens, &num_prompt_tokens);
+    if (num_prompt_tokens < 1) {
+        fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // start the main loop
+    long start = 0;  // used to time our code, only initialized after first iteration
+    int next;        // will store the next token in the sequence
+    int* generated_tokens = (int*)malloc(5 * sizeof(int));
+    int generated_tokens_count = 0;
+    int token = prompt_tokens[0]; // kick off with the first token in the prompt
+    int pos = 0;     // position in the sequence
+    while (pos < max_tokens_gen) {
+
+        // forward the transformer to get logits for the next token
+        float* logits = phi3_forward(transformer, token, pos);
+
+        // advance the state machine
+        if (pos < num_prompt_tokens - 1) {
+            // if we are still processing the input prompt, force the next prompt token
+            next = prompt_tokens[pos + 1];
+        } else {
+            // otherwise sample the next token from the logits
+            next = sample(sampler, logits);
+        }
+        pos++;
+
+        // data-dependent terminating condition: the BOS (=1) token delimits sequences
+        if (next == 1) { break; }
+
+        // print the token as string, decode it with the Tokenizer object
+        // printf(" Predicted token %d: ", token);
+        if(pos > num_prompt_tokens){
+            generated_tokens[generated_tokens_count++] = next;
+            int num_decode_tokens = 0;
+            char* piece = decode(tokenizer, &next, generated_tokens_count, &num_decode_tokens);
+            if(num_decode_tokens > 0){
+                callback(piece, strlen(piece));
+                generated_tokens_count = 0; // reset count after callback
+            }
+            free(piece);
+        }
+        token = next;
+
+        if (next == tokenizer->eos_token) {
+            break;
+        }
+    }
+
+    free(prompt_tokens);
+    free(generated_tokens);
+}
