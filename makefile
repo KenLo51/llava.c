@@ -15,8 +15,8 @@ OBJECTS_DEBUG = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/debug/%.o,$(SOURCES))
 OBJECTS_RELEASE = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/release/%.o,$(SOURCES))
 
 # Target executables
-TARGET_DEBUG = $(BUILD_DIR)/app_debug
-TARGET_RELEASE = $(BUILD_DIR)/app_release
+TARGET_DEBUG = $(BUILD_DIR)/run_debug
+TARGET_RELEASE = $(BUILD_DIR)/run
 
 # Compiler flags
 CFLAGS = -std=c11 -fopenmp -I$(INC_DIR) -Wall

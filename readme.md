@@ -1,6 +1,9 @@
 # 已完成
 1. Phi-3推理
-    - 執行`run <gguf file> -p "your prompt"`進行推理。
+    ```bash
+    make release
+    ./build/run ../res/Phi-3-mini-4k-instruct-fp16-hf.gguf -p "What is the capital of France? Answer shortly."
+    ```
 2. OpenMP加速
 
 # 待做
