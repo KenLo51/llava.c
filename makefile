@@ -1,4 +1,4 @@
-# Makefile for llava.c project (Linux)
+# Makefile for llava.c project
 
 # Compiler
 CC = gcc
@@ -9,8 +9,15 @@ INC_DIR = include
 BUILD_DIR = build
 OBJ_DIR = $(BUILD_DIR)/obj
 
-# Source files
-SOURCES = $(wildcard $(SRC_DIR)/*.c)
+# Detect compiler and adjust source files
+ifeq ($(CC),cl)
+    # Using MSVC cl compiler - include all files including win.c
+    SOURCES = $(wildcard $(SRC_DIR)/*.c)
+else
+    # Using gcc or other compilers - exclude win.c
+    SOURCES = $(filter-out $(SRC_DIR)/win.c,$(wildcard $(SRC_DIR)/*.c))
+endif
+
 OBJECTS_DEBUG = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/debug/%.o,$(SOURCES))
 OBJECTS_RELEASE = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/release/%.o,$(SOURCES))
 

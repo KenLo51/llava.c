@@ -78,6 +78,7 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx);
 void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights, gguf_context* ctx);
 Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx);
 
+void malloc_run_state(Phi3_RunState* s, Phi3_Config* p);
 void delete_phi3_transformer(Phi3_Transformer* phi3);
 
 // Inference functions
@@ -93,4 +94,4 @@ float* phi3_forward(Phi3_Transformer* phi3, int token, int pos);
 
 
 char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen);
-void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t));
+void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(char*, int));

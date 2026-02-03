@@ -636,7 +636,7 @@ char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler
     return decoded_str;
 }
 
-void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t)) {
+void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(char*, int)) {
     char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
