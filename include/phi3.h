@@ -1,3 +1,20 @@
+/**
+ * @file phi3.h
+ * @brief PHI-3 Transformer Model Implementation
+ * 
+ * This file contains the data structures and function declarations for the PHI-3
+ * language model. It provides functionality for loading model configurations and
+ * weights from GGUF files, running inference with KV caching, and generating text.
+ * 
+ * The implementation includes:
+ * - Model configuration and weight structures
+ * - Runtime state management with KV cache
+ * - Forward pass with rotary position embeddings (RoPE)
+ * - Multi-head attention with grouped query attention
+ * - Feed-forward networks with SiLU activation
+ * - Text generation with sampling strategies
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -18,6 +35,10 @@
     #include <sys/mman.h>
 #endif
 
+/**
+ * @struct Phi3_Config
+ * @brief Configuration parameters for the PHI-3 transformer model
+ */
 typedef struct {
     int dim; // transformer dimension
     int hidden_dim; // for ffn layers
@@ -28,6 +49,13 @@ typedef struct {
     int seq_len; // max sequence length
 } Phi3_Config;
 
+/**
+ * @struct Phi3_Weights
+ * @brief Model weights for the PHI-3 transformer
+ * 
+ * Contains all learnable parameters including embeddings, attention weights,
+ * feed-forward network weights, and normalization parameters.
+ */
 typedef struct {
     // token embedding table
     float* token_embedding_table;    // (vocab_size, dim)
@@ -46,6 +74,13 @@ typedef struct {
     float* wcls;
 } Phi3_Weights;
 
+/**
+ * @struct Phi3_RunState
+ * @brief Runtime activation buffers and KV cache for inference
+ * 
+ * Contains temporary buffers for storing intermediate activations during
+ * the forward pass, as well as key-value caches for efficient autoregressive generation.
+ */
 typedef struct {
     // current wave of activations
     float *x; // activation at current time stamp (dim,)
@@ -63,6 +98,12 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } Phi3_RunState;
 
+/**
+ * @struct Phi3_Transformer
+ * @brief Main PHI-3 transformer model structure
+ * 
+ * Combines configuration, weights, and runtime state into a single model instance.
+ */
 typedef struct {
     Phi3_Config config; // the hyperparameters of the architecture (the blueprint)
     Phi3_Weights weights; // the weights of the model
@@ -73,25 +114,104 @@ typedef struct {
 } Phi3_Transformer;
 
 
-// Instantiation and cleanup functions
+// ============================================================================
+// Instantiation and Cleanup Functions
+// ============================================================================
+
+/**
+ * @brief Load PHI-3 model configuration from GGUF metadata
+ * @param phi3_config Pointer to config structure to populate
+ * @param ctx GGUF context containing model metadata
+ */
 void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx);
+
+/**
+ * @brief Load PHI-3 model weights from GGUF tensors
+ * @param config Pointer to model configuration
+ * @param phi3_weights Pointer to weights structure to populate
+ * @param ctx GGUF context containing model tensors
+ */
 void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights, gguf_context* ctx);
+
+/**
+ * @brief Initialize a complete PHI-3 transformer from GGUF file
+ * @param ctx GGUF context containing model data
+ * @return Pointer to initialized transformer (must be freed with delete_phi3_transformer)
+ */
 Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx);
 
-void malloc_run_state(Phi3_RunState* s, Phi3_Config* p);
+/**
+ * @brief Free all memory associated with a PHI-3 transformer
+ * @param phi3 Pointer to transformer to delete
+ */
 void delete_phi3_transformer(Phi3_Transformer* phi3);
 
-// Inference functions
-void phi3_rotary_embedding_inplace(float* x, int dim, int seq_len, int pos);
-void phi3_rotary_embedding(float* out, float* in, int dim, int seq_len, int pos);
+// ============================================================================
+// Inference Functions
+// ============================================================================
 
+/**
+ * @brief Apply rotary position embeddings (RoPE) in-place
+ * @param x Input/output vector to apply RoPE to
+ * @param dim Total dimension of the vector
+ * @param head_dim Dimension per attention head
+ * @param pos Position index in the sequence
+ */
+void phi3_rotary_embedding_inplace(float* x, int dim, int head_dim, int pos);
+
+/**
+ * @brief Apply rotary position embeddings (RoPE) with separate output
+ * @param out Output vector for result
+ * @param in Input vector
+ * @param dim Total dimension of the vector
+ * @param head_dim Dimension per attention head
+ * @param pos Position index in the sequence
+ */
+void phi3_rotary_embedding(float* out, float* in, int dim, int head_dim, int pos);
+
+/**
+ * @brief Perform multi-head self-attention forward pass with KV cache
+ * @param phi3 Pointer to transformer model
+ * @param layer_index Index of the current layer
+ * @param pos Current position in the sequence
+ */
 void phi3_attention_forward(Phi3_Transformer* phi3,
                             int layer_index, int pos);
+
+/**
+ * @brief Perform feed-forward network forward pass
+ * @param phi3 Pointer to transformer model
+ * @param layer_index Index of the current layer
+ */
 void phi3_feed_forward(Phi3_Transformer* phi3, int layer_index);
 
-// Forward pass with a new token
+/**
+ * @brief Run forward pass through the entire transformer for a single token
+ * @param phi3 Pointer to transformer model
+ * @param token Input token ID
+ * @param pos Current position in the sequence
+ * @return Pointer to logits array for next token prediction
+ */
 float* phi3_forward(Phi3_Transformer* phi3, int token, int pos);
 
-
+/**
+ * @brief Generate text from a prompt (non-streaming)
+ * @param transformer Pointer to transformer model
+ * @param tokenizer Pointer to tokenizer
+ * @param sampler Pointer to sampling strategy
+ * @param prompt Input text prompt (NULL for empty prompt)
+ * @param max_tokens_gen Maximum number of tokens to generate
+ * @return Generated text as a string (must be freed by caller)
+ */
 char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen);
-void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(char*, int));
+
+/**
+ * @brief Generate text from a prompt with streaming callback
+ * @param transformer Pointer to transformer model
+ * @param tokenizer Pointer to tokenizer
+ * @param sampler Pointer to sampling strategy
+ * @param prompt Input text prompt (NULL for empty prompt)
+ * @param max_tokens_gen Maximum number of tokens to generate
+ * @param callback Function to call with each generated text chunk
+ */
+void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t));

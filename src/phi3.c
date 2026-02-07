@@ -1,6 +1,37 @@
+/**
+ * @file phi3.c
+ * @brief PHI-3 Transformer Model Implementation
+ * 
+ * This file implements the PHI-3 language model, a transformer-based architecture
+ * designed for efficient inference. The implementation includes:
+ * 
+ * Key Features:
+ * - GGUF file format support for model loading
+ * - Grouped Query Attention (GQA) for efficient KV caching
+ * - Rotary Position Embeddings (RoPE) for position encoding
+ * - SiLU activation in feed-forward networks
+ * - RMSNorm for layer normalization
+ * - Autoregressive text generation with sampling
+ * - Streaming generation support
+ * 
+ * The model supports multi-threaded inference using OpenMP for parallel operations.
+ */
+
 #include "phi3.h"
 
-// Instantiation and cleanup functions
+// ============================================================================
+// Instantiation and Cleanup Functions
+// ============================================================================
+
+/**
+ * @brief Load PHI-3 model configuration from GGUF metadata
+ * 
+ * Extracts hyperparameters from GGUF metadata including dimensions, layer counts,
+ * attention head configuration, vocabulary size, and context length.
+ * 
+ * @param phi3_config Pointer to config structure to populate
+ * @param ctx GGUF context containing model metadata
+ */
 void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
     if(!phi3_config || !ctx){
         fprintf(stderr, "NULL pointer passed to load_phi3_config_from_gguf\n");
@@ -82,6 +113,15 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
 #endif
 }
 
+/**
+ * @brief Copy tensor data from GGUF format to float array
+ * 
+ * Converts tensor data from its native GGUF type to float32 format.
+ * Uses OpenMP for parallel conversion of large tensors.
+ * 
+ * @param tensor Source GGUF tensor
+ * @param dest_array Destination float array (must be pre-allocated)
+ */
 void copy_tensor_data_to_float_array(gguf_tensor* tensor, float* dest_array){
     if(!tensor || !dest_array){
         fprintf(stderr, "NULL pointer passed to copy_tensor_data_to_float_array\n");
@@ -98,6 +138,18 @@ void copy_tensor_data_to_float_array(gguf_tensor* tensor, float* dest_array){
         dest_array[i] = ggml_type_to_float(type, data_ptr + i * ggml_type_size(type));
     }
 }
+
+/**
+ * @brief Load PHI-3 model weights from GGUF tensors
+ * 
+ * Allocates memory for all weight matrices and loads them from GGUF tensors.
+ * Handles token embeddings, attention weights (fused QKV), output projections,
+ * feed-forward weights, and normalization parameters.
+ * 
+ * @param config Pointer to model configuration (for dimension information)
+ * @param phi3_weights Pointer to weights structure to populate
+ * @param ctx GGUF context containing model tensors
+ */
 void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights, gguf_context* ctx){
     if(!phi3_weights || !ctx){
         fprintf(stderr, "NULL pointer passed to load_phi3_weights_from_gguf\n");
@@ -189,6 +241,16 @@ void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights
         }
     }
 }
+
+/**
+ * @brief Initialize a complete PHI-3 transformer from GGUF file
+ * 
+ * Creates and initializes all components of the transformer including
+ * configuration, weights, and runtime state.
+ * 
+ * @param ctx GGUF context containing model data
+ * @return Pointer to initialized transformer (must be freed with delete_phi3_transformer)
+ */
 Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx){
     Phi3_Transformer* phi3 = (Phi3_Transformer*)calloc(1, sizeof(Phi3_Transformer));
     if(!phi3){
@@ -200,6 +262,14 @@ Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx){
 
     return phi3;
 }
+
+/**
+ * @brief Free all memory associated with a PHI-3 transformer
+ * 
+ * Deallocates weights, runtime state buffers, and the transformer structure itself.
+ * 
+ * @param phi3 Pointer to transformer to delete
+ */
 void delete_phi3_transformer(Phi3_Transformer* phi3){
     if(phi3){
         free(phi3->weights.token_embedding_table);
@@ -229,6 +299,15 @@ void delete_phi3_transformer(Phi3_Transformer* phi3){
     }
 }
 
+/**
+ * @brief Allocate memory for runtime state buffers
+ * 
+ * Allocates all temporary buffers needed for forward pass computation,
+ * including activation buffers and KV cache.
+ * 
+ * @param s Pointer to runtime state structure
+ * @param p Pointer to model configuration
+ */
 void malloc_run_state(Phi3_RunState* s, Phi3_Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     s->x = calloc(p->dim, sizeof(float));
@@ -251,7 +330,22 @@ void malloc_run_state(Phi3_RunState* s, Phi3_Config* p) {
     }
 }
 
-// Inference functions
+// ============================================================================
+// Inference Functions
+// ============================================================================
+
+/**
+ * @brief Apply rotary position embeddings (RoPE) in-place
+ * 
+ * Implements RoPE by rotating pairs of values in each attention head based on
+ * position index. This encodes relative position information into the representations.
+ * Uses OpenMP for parallel processing across multiple heads.
+ * 
+ * @param x Input/output vector to apply RoPE to
+ * @param dim Total dimension of the vector
+ * @param head_dim Dimension per attention head
+ * @param pos Position index in the sequence
+ */
 void phi3_rotary_embedding_inplace(float* x, int dim, int head_dim, int pos) {
     int half_dim = head_dim / 2;
     int num_heads = dim / head_dim;
@@ -287,6 +381,18 @@ void phi3_rotary_embedding_inplace(float* x, int dim, int head_dim, int pos) {
     }
 }
 
+/**
+ * @brief Apply rotary position embeddings (RoPE) with separate output
+ * 
+ * Same as phi3_rotary_embedding_inplace but writes to a separate output buffer
+ * instead of modifying the input in-place.
+ * 
+ * @param out Output vector for result
+ * @param in Input vector
+ * @param dim Total dimension of the vector
+ * @param head_dim Dimension per attention head
+ * @param pos Position index in the sequence
+ */
 void phi3_rotary_embedding(float* out, float* in, int dim, int head_dim, int pos) {
     // RoPE: Rotary Position Embedding (separate output version)
     int half_dim = head_dim / 2;
@@ -322,6 +428,20 @@ void phi3_rotary_embedding(float* out, float* in, int dim, int head_dim, int pos
     }
 }
 
+/**
+ * @brief Perform feed-forward network forward pass
+ * 
+ * Implements the FFN with gated SiLU activation:
+ * 1. Projects input to 2*hidden_dim using gate_up weights
+ * 2. Splits into gate and up components
+ * 3. Applies SiLU(gate) * up
+ * 4. Projects back to model dimension using down weights
+ * 
+ * Uses OpenMP for parallel activation computation.
+ * 
+ * @param phi3 Pointer to transformer model
+ * @param layer_index Index of the current layer
+ */
 void phi3_feed_forward(Phi3_Transformer* phi3, int layer_index){
     Phi3_RunState* state = &phi3->state;
     Phi3_Weights* weights = &phi3->weights;
@@ -347,17 +467,26 @@ void phi3_feed_forward(Phi3_Transformer* phi3, int layer_index){
     matmul(state->xb, state->hb2, weight_down, hidden_dim, dim);
 }
 
+/**
+ * @brief Project input vector into Query, Key, and Value vectors
+ * 
+ * Uses a fused weight matrix to compute Q, K, and V projections in a single
+ * operation. The weight matrix has shape (3*dim, dim) with Q, K, V weights
+ * concatenated along the first dimension.
+ * 
+ * Uses OpenMP for parallel computation of each projection.
+ * 
+ * @param q_out Output array for Query vector (size: dim)
+ * @param k_out Output array for Key vector (size: dim)
+ * @param v_out Output array for Value vector (size: dim)
+ * @param in Input vector (size: dim)
+ * @param weight_qkv Fused weight matrix for Q, K, V (size: 3*dim × dim)
+ * @param dim Dimension of input and output vectors
+ */
 void phi3_proj_qkv(float* q_out, float* k_out, float* v_out,
                    float* in, float* weight_qkv,
                    int dim) {
-// Project input vector into Q, K, V using a fused weight matrix.
-// Args:
-//   q_out: Output array for Query vector. size: (dim,)
-//   k_out: Output array for Key vector. size: (dim,)
-//   v_out: Output array for Value vector. size: (dim,)
-//   in: Input vector (size: dim)
-//   weight_qkv: Fused weight matrix for Q, K, V. size: (dim , 3 * dim )
-//   dim: Dimension of the input and query, key, value vectors.
+
 
     // ----------------------------------------------------------------------
     // 1. Calculate Query (Q)
@@ -417,9 +546,23 @@ void phi3_proj_qkv(float* q_out, float* k_out, float* v_out,
     }
 }
 
+/**
+ * @brief Perform multi-head self-attention forward pass with KV cache
+ * 
+ * Implements scaled dot-product attention with:
+ * - Fused QKV projection
+ * - Rotary position embeddings (RoPE)
+ * - KV caching for efficient autoregressive generation
+ * - Grouped Query Attention (GQA) support
+ * - Parallel computation across attention heads using OpenMP
+ * 
+ * @param phi3 Pointer to transformer model
+ * @param layer_index Index of the current layer
+ * @param pos Current position in the sequence
+ */
 void phi3_attention_forward(Phi3_Transformer* phi3,
                             int layer_index, int pos) {
-// Forward pass through self-attention layer with KV cache.
+
 
     Phi3_Config* config = &phi3->config;
     Phi3_RunState* state = &phi3->state;
@@ -508,11 +651,23 @@ void phi3_attention_forward(Phi3_Transformer* phi3,
     matmul(hidden_state, xb, weight_o, dim, dim);
 }
 
+/**
+ * @brief Forward pass through a single decoder layer
+ * 
+ * Implements a standard transformer decoder block:
+ * 1. RMSNorm + Self-Attention + Residual
+ * 2. RMSNorm + Feed-Forward + Residual
+ * 
+ * Uses KV cache for efficient autoregressive generation.
+ * 
+ * @param phi3 Pointer to transformer model
+ * @param layer_index Index of the current layer
+ * @param pos Current position in the sequence
+ */
 void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
                                 int layer_index,
                                 int pos) {
-// Forward pass through a single decoder layer.
-// Using KV cache for masked self-attention.
+
 
     
     Phi3_Config* config = &phi3->config;
@@ -549,8 +704,22 @@ void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
     }
 }
 
+/**
+ * @brief Run forward pass through the entire transformer for a single token
+ * 
+ * Complete forward pass:
+ * 1. Token embedding lookup
+ * 2. Forward through all decoder layers
+ * 3. Final RMSNorm
+ * 4. Output projection to vocabulary logits
+ * 
+ * @param phi3 Pointer to transformer model
+ * @param token Input token ID
+ * @param pos Current position in the sequence
+ * @return Pointer to logits array for next token prediction (size: vocab_size)
+ */
 float* phi3_forward(Phi3_Transformer* phi3, int token, int pos){
-// Forward pass with a new token
+
 
     Phi3_Config* config = &phi3->config;
     Phi3_Weights* weight = &phi3->weights;
@@ -576,6 +745,22 @@ float* phi3_forward(Phi3_Transformer* phi3, int token, int pos){
     return state->logits;
 }
 
+/**
+ * @brief Generate text from a prompt (non-streaming)
+ * 
+ * Performs autoregressive text generation:
+ * 1. Encodes the prompt into tokens
+ * 2. Processes prompt tokens through the model
+ * 3. Samples and generates new tokens until EOS or max_tokens_gen
+ * 4. Decodes generated tokens into text
+ * 
+ * @param transformer Pointer to transformer model
+ * @param tokenizer Pointer to tokenizer
+ * @param sampler Pointer to sampling strategy
+ * @param prompt Input text prompt (NULL for empty prompt)
+ * @param max_tokens_gen Maximum number of tokens to generate
+ * @return Generated text as a string (must be freed by caller)
+ */
 char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen) {
     char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
@@ -611,12 +796,13 @@ char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler
         }
         pos++;
 
-        // data-dependent terminating condition: the BOS (=1) token delimits sequences
-        if (next == 1) { break; }
+        //  terminating condition: EOS token delimits sequences. (2:<\s>, 32000:<|endoftext|>, 32007:<|end|>)
+        if ((pos >= num_prompt_tokens) &&
+            (next == 2 || next == 32000 || next == 32007)) { break; }
 
         // print the token as string, decode it with the Tokenizer object
         // printf(" Predicted token %d: ", token);
-        if(pos > num_prompt_tokens){
+        if(pos >= num_prompt_tokens){
             generated_tokens[generated_tokens_count++] = next;
             // char* piece = decode(tokenizer, &next, 1);
             // safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
@@ -636,7 +822,20 @@ char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler
     return decoded_str;
 }
 
-void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(char*, int)) {
+/**
+ * @brief Generate text from a prompt with streaming callback
+ * 
+ * Similar to phi3_generate but calls a callback function with each decoded
+ * text chunk as it's generated, allowing for real-time streaming output.
+ * 
+ * @param transformer Pointer to transformer model
+ * @param tokenizer Pointer to tokenizer
+ * @param sampler Pointer to sampling strategy
+ * @param prompt Input text prompt (NULL for empty prompt)
+ * @param max_tokens_gen Maximum number of tokens to generate
+ * @param callback Function to call with each generated text chunk (text, length)
+ */
+void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t)) {
     char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
@@ -671,12 +870,13 @@ void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, S
         }
         pos++;
 
-        // data-dependent terminating condition: the BOS (=1) token delimits sequences
-        if (next == 1) { break; }
+        //  terminating condition: EOS token delimits sequences. (2:<\s>, 32000:<|endoftext|>, 32007:<|end|>)
+        if ((pos >= num_prompt_tokens) &&
+            (next == 2 || next == 32000 || next == 32007)) { break; }
 
         // print the token as string, decode it with the Tokenizer object
         // printf(" Predicted token %d: ", token);
-        if(pos > num_prompt_tokens){
+        if(pos >= num_prompt_tokens){
             generated_tokens[generated_tokens_count++] = next;
             int num_decode_tokens = 0;
             char* piece = decode(tokenizer, &next, generated_tokens_count, &num_decode_tokens);
