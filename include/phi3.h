@@ -15,6 +15,8 @@
  * - Text generation with sampling strategies
  */
 
+#ifndef PHI3_H
+#define PHI3_H
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -66,8 +68,8 @@ typedef struct {
     float* wqkv; // (layer, dim, 3 * n_heads * head_size)
     float* wo; // (layer, dim, dim)
     // weights for ffn
-    float* w_up; // (layer, 2 * hidden_dim, dim)
-    float* w_down; // (layer, dim, hidden_dim)
+    float* w_up; // (layer, dim, 2 * hidden_dim)
+    float* w_down; // (layer, hidden_dim, dim)
     // final rmsnorm
     float* rms_final_weight; // (dim,)
     // (optional) classifier weights for the logits, on the last layer
@@ -108,9 +110,6 @@ typedef struct {
     Phi3_Config config; // the hyperparameters of the architecture (the blueprint)
     Phi3_Weights weights; // the weights of the model
     Phi3_RunState state; // buffers for the "wave" of activations in the forward pass
-    // some more state needed to properly clean up the memory mapping (sigh)
-    int fd; // file descriptor for memory mapping
-    ssize_t file_size; // size of the checkpoint file in bytes
 } Phi3_Transformer;
 
 
@@ -215,3 +214,5 @@ char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler
  * @param callback Function to call with each generated text chunk
  */
 void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t));
+
+#endif // PHI3_H

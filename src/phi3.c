@@ -113,31 +113,6 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
 #endif
 }
 
-/**
- * @brief Copy tensor data from GGUF format to float array
- * 
- * Converts tensor data from its native GGUF type to float32 format.
- * Uses OpenMP for parallel conversion of large tensors.
- * 
- * @param tensor Source GGUF tensor
- * @param dest_array Destination float array (must be pre-allocated)
- */
-void copy_tensor_data_to_float_array(gguf_tensor* tensor, float* dest_array){
-    if(!tensor || !dest_array){
-        fprintf(stderr, "NULL pointer passed to copy_tensor_data_to_float_array\n");
-        exit(EXIT_FAILURE);
-    }
-
-    size_t n_elements = tensor->n_elements;
-    ggml_type type = tensor->type;
-    uint8_t* data_ptr = (uint8_t*)tensor->data;
-
-    int i;
-    #pragma omp parallel for private(i)
-    for (i = 0; i < n_elements; i++) {
-        dest_array[i] = ggml_type_to_float(type, data_ptr + i * ggml_type_size(type));
-    }
-}
 
 /**
  * @brief Load PHI-3 model weights from GGUF tensors

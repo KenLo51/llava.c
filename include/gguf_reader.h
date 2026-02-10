@@ -58,6 +58,9 @@ typedef struct {
     char* data;
 } gguf_string;
 
+// Forward declaration for circular dependency
+typedef struct gguf_array gguf_array;
+
 // Value union for different types
 typedef union {
     uint8_t   uint8;
@@ -72,15 +75,15 @@ typedef union {
     int64_t   int64;
     double    float64;
     gguf_string string;
-    void*     arr;  // pointer to array data
+    gguf_array*     arr;  // pointer to array data
 } gguf_value;
 
 // Array structure
-typedef struct {
+struct gguf_array {
     gguf_type type;
     uint64_t len;
-    void* data;  // array of values
-} gguf_array;
+    gguf_value* data;  // array of values
+};
 
 // Metadata key-value pair
 typedef struct {
@@ -151,5 +154,8 @@ void gguf_free_tensor_data(gguf_tensor* tensor);
 // Print functions for debugging
 void gguf_print_metadata(gguf_context* ctx);
 void gguf_print_tensors(gguf_context* ctx);
+
+// Data conversion
+void copy_tensor_data_to_float_array(gguf_tensor* tensor, float* dest_array);
 
 #endif // GGUF_READER_H
