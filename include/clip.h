@@ -140,7 +140,7 @@ void clip_vision_init_run_state(CLIP_Vision_RunState* state, CLIP_Vision_Config*
  * configuration, weights, and runtime state buffers.
  * 
  * @param ctx GGUF context containing model data
- * @return Pointer to initialized model (must be freed with clip_vision_delete_model)
+ * @return Pointer to initialized model (must be freed with clip_vision_delete)
  */
 CLIP_Vision_Model* clip_vision_create_from_gguf(gguf_context* ctx);
 
@@ -151,7 +151,7 @@ CLIP_Vision_Model* clip_vision_create_from_gguf(gguf_context* ctx);
  * 
  * @param model Pointer to model to delete
  */
-void clip_vision_delete_model(CLIP_Vision_Model* model);
+void clip_vision_delete(CLIP_Vision_Model* model);
 
 // ============================================================================
 // Inference Functions

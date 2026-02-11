@@ -79,10 +79,6 @@ void clip_vision_load_config_from_gguf(CLIP_Vision_Config* config, gguf_context*
         fprintf(stderr, "Expected 3 values for image_mean, got %zu\n", mean_array->len);
         exit(EXIT_FAILURE);
     }
-    if(!config->image_mean){
-        fprintf(stderr, "Failed to allocate memory for image_mean\n");
-        exit(EXIT_FAILURE);
-    }
     for(int i = 0; i < 3; i++){
         gguf_value mean_data = mean_array->data[i];
         config->image_mean[i] = mean_data.float32;
@@ -99,10 +95,6 @@ void clip_vision_load_config_from_gguf(CLIP_Vision_Config* config, gguf_context*
     gguf_array* std_array = (gguf_array*)(kv->value.arr);
     if(std_array->len != 3){
         fprintf(stderr, "Expected 3 values for image_std, got %zu\n", std_array->len);
-        exit(EXIT_FAILURE);
-    }
-    if(!config->image_std){
-        fprintf(stderr, "Failed to allocate memory for image_std\n");
         exit(EXIT_FAILURE);
     }
     for(int i = 0; i < 3; i++){
@@ -344,7 +336,7 @@ void clip_vision_init_run_state(CLIP_Vision_RunState* state, CLIP_Vision_Config*
  * configuration, weights, and runtime state buffers.
  * 
  * @param ctx GGUF context containing model data
- * @return Pointer to initialized model (must be freed with clip_vision_delete_model)
+ * @return Pointer to initialized model (must be freed with clip_vision_delete)
  */
 CLIP_Vision_Model* clip_vision_create_from_gguf(gguf_context* ctx){
     CLIP_Vision_Model* model = (CLIP_Vision_Model*)calloc(1, sizeof(CLIP_Vision_Model));
@@ -365,7 +357,7 @@ CLIP_Vision_Model* clip_vision_create_from_gguf(gguf_context* ctx){
  * 
  * @param model Pointer to model to delete
  */
-void clip_vision_delete_model(CLIP_Vision_Model* model){
+void clip_vision_delete(CLIP_Vision_Model* model){
     if(!model) return;
     
     // Free weights
@@ -434,14 +426,16 @@ void clip_get_image_features(CLIP_Vision_Model* model, float* image, float* outp
     float* std = model->config.image_std;
     int image_size = model->config.image_size;
 
+    #pragma omp parallel for private(i)
     for(i=0; i<image_size*image_size*3; i++){
         int c = i / (image_size * image_size); // channel index
-        int x = (i % (image_size * image_size)) / image_size; // x coordinate
-        int y = (i % (image_size * image_size)) % image_size; // y coordinate
+        // int x = (i % (image_size * image_size)) / image_size; // x coordinate
+        // int y = (i % (image_size * image_size)) % image_size; // y coordinate
         float pixel = image[i];
         pixel = (pixel - mean[c]) / std[c];
         image[i] = pixel;
     }
+
     // 2. Forward
     clip_vision_forward(model, image, output_embedding);
 
@@ -822,7 +816,9 @@ void clip_vision_encoder_layer_forward(CLIP_Vision_Model* model, int layer_idx){
 
     // 3. Residual connection
     for(int i=0; i < num_patches + 1; i++){
-        for(int d=0; d < model->config.dim; d++){
+        int d;
+        #pragma omp parallel for private(d)
+        for(d=0; d < model->config.dim; d++){
             float* in1 = &model->state.x[i * model->config.dim + d];
             float* in2 = &model->state.xb[i * model->config.dim + d];
             float* out = &model->state.x[i * model->config.dim + d];
@@ -908,7 +904,9 @@ void clip_vision_encoder_layer_forward(CLIP_Vision_Model* model, int layer_idx){
 
     // 6. Residual connection
     for(int i=0; i < num_patches + 1; i++){
-        for(int d=0; d < model->config.dim; d++){
+        int d;
+        #pragma omp parallel for private(d)
+        for(d=0; d < model->config.dim; d++){
             float* in1 = &model->state.x[i * model->config.dim + d];
             float* in2 = &model->state.xb[i * model->config.dim + d];
             float* out = &model->state.x[i * model->config.dim + d];

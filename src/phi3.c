@@ -32,9 +32,9 @@
  * @param phi3_config Pointer to config structure to populate
  * @param ctx GGUF context containing model metadata
  */
-void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
+void phi3_load_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
     if(!phi3_config || !ctx){
-        fprintf(stderr, "NULL pointer passed to load_phi3_config_from_gguf\n");
+        fprintf(stderr, "NULL pointer passed to phi3_load_config_from_gguf\n");
         exit(EXIT_FAILURE);
     }
 
@@ -47,9 +47,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->dim = kv->value.uint32;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.dim = %d\n", phi3_config->dim);
-#endif
+    #endif
 
     // hidden_dim, for ffn layers
     kv = gguf_get_metadata(ctx, "phi3.feed_forward_length");
@@ -58,9 +58,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->hidden_dim = kv->value.uint32;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.hidden_dim = %d\n", phi3_config->hidden_dim);
-#endif
+    #endif
     // n_layers, number of layers
     kv = gguf_get_metadata(ctx, "phi3.block_count");
     if(!kv){
@@ -68,9 +68,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->n_layers = kv->value.uint32;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.n_layers = %d\n", phi3_config->n_layers);
-#endif
+    #endif
     // n_heads, number of query heads
     kv = gguf_get_metadata(ctx, "phi3.attention.head_count");
     if(!kv){
@@ -78,9 +78,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->n_heads = kv->value.uint32;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.n_heads = %d\n", phi3_config->n_heads);
-#endif
+    #endif
     // n_kv_heads, number of key/value heads (can be < query heads because of multiquery)
     kv = gguf_get_metadata(ctx, "phi3.attention.head_count_kv");
     if(!kv){
@@ -88,9 +88,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->n_kv_heads = kv->value.uint32;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.n_kv_heads = %d\n", phi3_config->n_kv_heads);
-#endif
+    #endif
     // vocab_size, vocabulary size, usually 256 (byte-level)
     kv = gguf_get_metadata(ctx, "tokenizer.ggml.tokens");
     if(!kv){
@@ -98,9 +98,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->vocab_size = ((gguf_array*)(kv->value.arr))->len;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.vocab_size = %d\n", phi3_config->vocab_size);
-#endif
+    #endif
     // seq_len, max sequence length
     kv = gguf_get_metadata(ctx, "phi3.context_length");
     if(!kv){
@@ -108,9 +108,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
         exit(EXIT_FAILURE);
     }
     phi3_config->seq_len = kv->value.uint32;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("Loaded phi3.seq_len = %d\n", phi3_config->seq_len);
-#endif
+    #endif
 }
 
 
@@ -125,9 +125,9 @@ void load_phi3_config_from_gguf(Phi3_Config* phi3_config, gguf_context* ctx){
  * @param phi3_weights Pointer to weights structure to populate
  * @param ctx GGUF context containing model tensors
  */
-void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights, gguf_context* ctx){
+void phi3_load_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights, gguf_context* ctx){
     if(!phi3_weights || !ctx){
-        fprintf(stderr, "NULL pointer passed to load_phi3_weights_from_gguf\n");
+        fprintf(stderr, "NULL pointer passed to phi3_load_weights_from_gguf\n");
         exit(EXIT_FAILURE);
     }
 
@@ -156,9 +156,9 @@ void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights
     for(unsigned int i=0; i<ctx->tensor_count; i++){
         gguf_tensor* tensor = &ctx->tensors[i];
 
-#ifdef DEBUG
+    #ifdef DEBUG
         printf("Processing tensor: %s\n", tensor->name);
-#endif
+    #endif
         
         // input and output embeddings
         if(strcmp(tensor->name, "token_embd.weight") == 0){
@@ -224,16 +224,17 @@ void load_phi3_weights_from_gguf(Phi3_Config* config, Phi3_Weights* phi3_weights
  * configuration, weights, and runtime state.
  * 
  * @param ctx GGUF context containing model data
- * @return Pointer to initialized transformer (must be freed with delete_phi3_transformer)
+ * @return Pointer to initialized transformer (must be freed with phi3_delete)
  */
-Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx){
-    Phi3_Transformer* phi3 = (Phi3_Transformer*)calloc(1, sizeof(Phi3_Transformer));
+Phi3_Model* phi3_init_from_gguf(gguf_context* ctx){
+    Phi3_Model* phi3 = (Phi3_Model*)calloc(1, sizeof(Phi3_Model));
     if(!phi3){
-        fprintf(stderr, "Failed to allocate memory for Phi3_Transformer\n");
+        fprintf(stderr, "Failed to allocate memory for Phi3_Model\n");
         exit(EXIT_FAILURE);
     }
-    load_phi3_config_from_gguf(&phi3->config, ctx);
-    load_phi3_weights_from_gguf(&phi3->config, &phi3->weights, ctx);
+    phi3_load_config_from_gguf(&phi3->config, ctx);
+    phi3_load_weights_from_gguf(&phi3->config, &phi3->weights, ctx);
+    phi3_malloc_run_state(&phi3->state, &phi3->config);
 
     return phi3;
 }
@@ -245,7 +246,7 @@ Phi3_Transformer* init_phi3_from_gguf(gguf_context* ctx){
  * 
  * @param phi3 Pointer to transformer to delete
  */
-void delete_phi3_transformer(Phi3_Transformer* phi3){
+void phi3_delete(Phi3_Model* phi3){
     if(phi3){
         free(phi3->weights.token_embedding_table);
         free(phi3->weights.rms_att_weight);
@@ -283,7 +284,7 @@ void delete_phi3_transformer(Phi3_Transformer* phi3){
  * @param s Pointer to runtime state structure
  * @param p Pointer to model configuration
  */
-void malloc_run_state(Phi3_RunState* s, Phi3_Config* p) {
+void phi3_malloc_run_state(Phi3_RunState* s, Phi3_Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     s->x = calloc(p->dim, sizeof(float));
     s->xb = calloc(p->dim, sizeof(float));
@@ -417,7 +418,7 @@ void phi3_rotary_embedding(float* out, float* in, int dim, int head_dim, int pos
  * @param phi3 Pointer to transformer model
  * @param layer_index Index of the current layer
  */
-void phi3_feed_forward(Phi3_Transformer* phi3, int layer_index){
+void phi3_FFN_forward(Phi3_Model* phi3, int layer_index){
     Phi3_RunState* state = &phi3->state;
     Phi3_Weights* weights = &phi3->weights;
     float* weight_up = &weights->w_up[layer_index * 2 * phi3->config.hidden_dim * phi3->config.dim];
@@ -535,7 +536,7 @@ void phi3_proj_qkv(float* q_out, float* k_out, float* v_out,
  * @param layer_index Index of the current layer
  * @param pos Current position in the sequence
  */
-void phi3_attention_forward(Phi3_Transformer* phi3,
+void phi3_attention_forward(Phi3_Model* phi3,
                             int layer_index, int pos) {
 
 
@@ -639,7 +640,7 @@ void phi3_attention_forward(Phi3_Transformer* phi3,
  * @param layer_index Index of the current layer
  * @param pos Current position in the sequence
  */
-void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
+void phi3_decoder_layer_forward(Phi3_Model* phi3,
                                 int layer_index,
                                 int pos) {
 
@@ -650,7 +651,7 @@ void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
     Phi3_RunState* state = &phi3->state;
     
     int dim = config->dim;
-    int hidden_dim = config->hidden_dim;
+    // int hidden_dim = config->hidden_dim;
 
     // 1. attention layernorm (RMSNorm)
     rmsnorm(state->xb, state->x, weight->rms_att_weight + layer_index * dim, dim);
@@ -670,7 +671,7 @@ void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
     rmsnorm(state->xb, state->x, weight->rms_ffn_weight + layer_index * dim, dim);
 
     // 5. feed-forward network
-    phi3_feed_forward(phi3, layer_index);
+    phi3_FFN_forward(phi3, layer_index);
 
     // 6. residual connection
     #pragma omp parallel for private(i)
@@ -693,7 +694,7 @@ void phi3_decoder_layer_forward(Phi3_Transformer* phi3,
  * @param pos Current position in the sequence
  * @return Pointer to logits array for next token prediction (size: vocab_size)
  */
-float* phi3_forward(Phi3_Transformer* phi3, int token, int pos){
+float* phi3_forward(Phi3_Model* phi3, int token, int pos){
 
 
     Phi3_Config* config = &phi3->config;
@@ -736,7 +737,7 @@ float* phi3_forward(Phi3_Transformer* phi3, int token, int pos){
  * @param max_tokens_gen Maximum number of tokens to generate
  * @return Generated text as a string (must be freed by caller)
  */
-char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen) {
+char* phi3_generate(Phi3_Model *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen) {
     char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
@@ -750,7 +751,7 @@ char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler
     }
 
     // start the main loop
-    long start = 0;  // used to time our code, only initialized after first iteration
+    // long start = 0;  // used to time our code, only initialized after first iteration
     int next;        // will store the next token in the sequence
     int* generated_tokens = (int*)malloc(max_tokens_gen * sizeof(int));
     int generated_tokens_count = 0;
@@ -810,7 +811,7 @@ char* phi3_generate(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler
  * @param max_tokens_gen Maximum number of tokens to generate
  * @param callback Function to call with each generated text chunk (text, length)
  */
-void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t)) {
+void phi3_generate_stream(Phi3_Model *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int max_tokens_gen, void (*callback)(const char*, size_t)) {
     char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
@@ -824,7 +825,7 @@ void phi3_generate_stream(Phi3_Transformer *transformer, Tokenizer *tokenizer, S
     }
 
     // start the main loop
-    long start = 0;  // used to time our code, only initialized after first iteration
+    // long start = 0;  // used to time our code, only initialized after first iteration
     int next;        // will store the next token in the sequence
     int* generated_tokens = (int*)malloc(5 * sizeof(int));
     int generated_tokens_count = 0;
