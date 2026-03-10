@@ -157,6 +157,8 @@ void clip_vision_delete(CLIP_Vision_Model* model);
 // Inference Functions
 // ============================================================================
 
+void clip_preprocess_image_path(CLIP_Vision_Model* model, const char* image_path, float* output_buffer);
+
 /**
  * @brief Extract image features from an image file
  * 
@@ -209,5 +211,6 @@ void clip_get_image_features(CLIP_Vision_Model* model, float* image, float* outp
  */
 void clip_vision_forward(CLIP_Vision_Model* model, float* patches, float* output_embedding);
 
+void clip_vision_forward_early_exit(CLIP_Vision_Model* model, float* patches, float* output_embedding, int exit_layer);
 
 #endif // CLIP_H

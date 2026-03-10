@@ -201,6 +201,15 @@ void phi3_FFN_forward(Phi3_Model* phi3, int layer_index);
 float* phi3_forward(Phi3_Model* phi3, int token, int pos);
 
 /**
+ * @brief Run forward pass through the entire transformer for a single token, starting from an embedding vector instead of a token ID
+ * @param phi3 Pointer to transformer model
+ * @param embedding Input embedding vector (dim,)
+ * @param pos Current position in the sequence
+ * @return Pointer to logits array for next token prediction
+ */
+float* phi3_forward_embed(Phi3_Model* phi3, float* embedding, int pos);
+
+/**
  * @brief Generate text from a prompt (non-streaming)
  * @param transformer Pointer to transformer model
  * @param tokenizer Pointer to tokenizer

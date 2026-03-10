@@ -174,18 +174,19 @@ void clip_vision_load_weights_from_gguf(CLIP_Vision_Config* config, CLIP_Vision_
     weights->b_ln1 = (float*)malloc(sizeof(float) * config->n_layers * config->dim); // (layer, dim)
     weights->w_ln2 = (float*)malloc(sizeof(float) * config->n_layers * config->dim); // (layer, dim)
     weights->b_ln2 = (float*)malloc(sizeof(float) * config->n_layers * config->dim); // (layer, dim)
-    weights->w_post_ln = (float*)malloc(sizeof(float) * config->dim); // (dim,) weights for post-layernorm
-    weights->b_post_ln = (float*)malloc(sizeof(float) * config->dim); // (dim,) bias for post-layernorm
-    weights->w_proj = (float*)malloc(sizeof(float) * config->dim * config->proj_dim); // (dim, proj_dim) projection matrix for output embedding (unused in LLaVA)
-
+    
+    // Malloc and load if present, otherwise remains NULL (unused in LLaVA)
+    weights->w_post_ln = NULL; // (dim,) weights for post-layernorm
+    weights->b_post_ln = NULL; // (dim,) bias for post-layernorm
+    weights->w_proj = NULL; // (dim, proj_dim) projection matrix for output feature. 
+    
     // check mallocs
     if(!weights->e_cls || !weights->e_patch || !weights->e_pos || 
        !weights->w_pre_ln || !weights->b_pre_ln || 
        !weights->wq || !weights->bq || !weights->wk || !weights->bk || 
        !weights->wv || !weights->bv || !weights->wo || !weights->bo || 
        !weights->w_fc1 || !weights->b_fc1 || !weights->w_fc2 || !weights->b_fc2 || 
-       !weights->w_ln1 || !weights->b_ln1 || !weights->w_ln2 || !weights->b_ln2 || 
-       !weights->w_post_ln || !weights->b_post_ln || !weights->w_proj){
+       !weights->w_ln1 || !weights->b_ln1 || !weights->w_ln2 || !weights->b_ln2){
         fprintf(stderr, "Failed to allocate memory for CLIP Vision weights\n");
         exit(EXIT_FAILURE);
     }
@@ -215,12 +216,27 @@ void clip_vision_load_weights_from_gguf(CLIP_Vision_Config* config, CLIP_Vision_
             copy_tensor_data_to_float_array(tensor, weights->b_pre_ln);
         }
         else if(strcmp(tensor->name, "v.post_ln.weight") == 0){
+            weights->w_post_ln = (float*)malloc(sizeof(float) * config->dim); // (dim,) weights for post-layernorm
+            if(!weights->w_post_ln){
+                fprintf(stderr, "Failed to allocate memory for post-layernorm weights\n");
+                exit(EXIT_FAILURE);
+            }
             copy_tensor_data_to_float_array(tensor, weights->w_post_ln);
         }
         else if(strcmp(tensor->name, "v.post_ln.bias") == 0){
+            weights->b_post_ln = (float*)malloc(sizeof(float) * config->dim); // (dim,) bias for post-layernorm
+            if(!weights->b_post_ln){
+                fprintf(stderr, "Failed to allocate memory for post-layernorm bias\n");
+                exit(EXIT_FAILURE);
+            }
             copy_tensor_data_to_float_array(tensor, weights->b_post_ln);
         }
         else if(strcmp(tensor->name, "vproj.weight") == 0){
+            weights->w_proj = (float*)malloc(sizeof(float) * config->dim * config->proj_dim); // (dim, proj_dim) projection matrix for output embedding (unused in LLaVA)
+            if(!weights->w_proj){
+                fprintf(stderr, "Failed to allocate memory for projection weights\n");
+                exit(EXIT_FAILURE);
+            }
             copy_tensor_data_to_float_array(tensor, weights->w_proj);
         }
         // transformer blocks
@@ -361,40 +377,40 @@ void clip_vision_delete(CLIP_Vision_Model* model){
     if(!model) return;
     
     // Free weights
-    if(model->weights.e_cls) free(model->weights.e_cls);
-    if(model->weights.e_patch) free(model->weights.e_patch);
-    if(model->weights.e_pos) free(model->weights.e_pos);
-    if(model->weights.w_pre_ln) free(model->weights.w_pre_ln);
-    if(model->weights.b_pre_ln) free(model->weights.b_pre_ln);
-    if(model->weights.wq) free(model->weights.wq);
-    if(model->weights.bq) free(model->weights.bq);
-    if(model->weights.wk) free(model->weights.wk);
-    if(model->weights.bk) free(model->weights.bk);
-    if(model->weights.wv) free(model->weights.wv);
-    if(model->weights.bv) free(model->weights.bv);
-    if(model->weights.wo) free(model->weights.wo);
-    if(model->weights.bo) free(model->weights.bo);
-    if(model->weights.w_fc1) free(model->weights.w_fc1);
-    if(model->weights.b_fc1) free(model->weights.b_fc1);
-    if(model->weights.w_fc2) free(model->weights.w_fc2);
-    if(model->weights.b_fc2) free(model->weights.b_fc2);
-    if(model->weights.w_ln1) free(model->weights.w_ln1);
-    if(model->weights.b_ln1) free(model->weights.b_ln1);
-    if(model->weights.w_ln2) free(model->weights.w_ln2);
-    if(model->weights.b_ln2) free(model->weights.b_ln2);
-    if(model->weights.w_post_ln) free(model->weights.w_post_ln);
-    if(model->weights.b_post_ln) free(model->weights.b_post_ln);
+    if(model->weights.e_cls) { free(model->weights.e_cls); model->weights.e_cls = NULL; }
+    if(model->weights.e_patch) { free(model->weights.e_patch); model->weights.e_patch = NULL; }
+    if(model->weights.e_pos) { free(model->weights.e_pos); model->weights.e_pos = NULL; }
+    if(model->weights.w_pre_ln) { free(model->weights.w_pre_ln); model->weights.w_pre_ln = NULL; }
+    if(model->weights.b_pre_ln) { free(model->weights.b_pre_ln); model->weights.b_pre_ln = NULL; }
+    if(model->weights.wq) { free(model->weights.wq); model->weights.wq = NULL; }
+    if(model->weights.bq) { free(model->weights.bq); model->weights.bq = NULL; }
+    if(model->weights.wk) { free(model->weights.wk); model->weights.wk = NULL; }
+    if(model->weights.bk) { free(model->weights.bk); model->weights.bk = NULL; }
+    if(model->weights.wv) { free(model->weights.wv); model->weights.wv = NULL; }
+    if(model->weights.bv) { free(model->weights.bv); model->weights.bv = NULL; }
+    if(model->weights.wo) { free(model->weights.wo); model->weights.wo = NULL; }
+    if(model->weights.bo) { free(model->weights.bo); model->weights.bo = NULL; }
+    if(model->weights.w_fc1) { free(model->weights.w_fc1); model->weights.w_fc1 = NULL; }
+    if(model->weights.b_fc1) { free(model->weights.b_fc1); model->weights.b_fc1 = NULL; }
+    if(model->weights.w_fc2) { free(model->weights.w_fc2); model->weights.w_fc2 = NULL; }
+    if(model->weights.b_fc2) { free(model->weights.b_fc2); model->weights.b_fc2 = NULL; }
+    if(model->weights.w_ln1) { free(model->weights.w_ln1); model->weights.w_ln1 = NULL; }
+    if(model->weights.b_ln1) { free(model->weights.b_ln1); model->weights.b_ln1 = NULL; }
+    if(model->weights.w_ln2) { free(model->weights.w_ln2); model->weights.w_ln2 = NULL; }
+    if(model->weights.b_ln2) { free(model->weights.b_ln2); model->weights.b_ln2 = NULL; }
+    if(model->weights.w_post_ln) { free(model->weights.w_post_ln); model->weights.w_post_ln = NULL; }
+    if(model->weights.b_post_ln) { free(model->weights.b_post_ln); model->weights.b_post_ln = NULL; }
     
     // Free run state
-    if(model->state.x) free(model->state.x);
-    if(model->state.xb) free(model->state.xb);
-    if(model->state.xb2) free(model->state.xb2);
-    if(model->state.hb) free(model->state.hb);
-    if(model->state.hb2) free(model->state.hb2);
-    if(model->state.q) free(model->state.q);
-    if(model->state.k) free(model->state.k);
-    if(model->state.v) free(model->state.v);
-    if(model->state.att) free(model->state.att);
+    if(model->state.x) { free(model->state.x); model->state.x = NULL; }
+    if(model->state.xb) { free(model->state.xb); model->state.xb = NULL; }
+    if(model->state.xb2) { free(model->state.xb2); model->state.xb2 = NULL; }
+    if(model->state.hb) { free(model->state.hb); model->state.hb = NULL; }
+    if(model->state.hb2) { free(model->state.hb2); model->state.hb2 = NULL; }
+    if(model->state.q) { free(model->state.q); model->state.q = NULL; }
+    if(model->state.k) { free(model->state.k); model->state.k = NULL; }
+    if(model->state.v) { free(model->state.v); model->state.v = NULL; }
+    if(model->state.att) { free(model->state.att); model->state.att = NULL; }
     
     // Free the model structure itself
     free(model);
@@ -404,67 +420,7 @@ void clip_vision_delete(CLIP_Vision_Model* model){
 // Inference Functions
 // ============================================================================
 
-/**
- * @brief Extract image features from a pixel array
- * 
- * Processes a pre-loaded image (as pixel array) through the CLIP Vision model.
- * The input image should be in range [0, 1] and will be normalized using the
- * model's mean and std values. The function:
- * 1. Normalizes the pixel values
- * 2. Runs forward pass through the vision transformer
- * 3. Projects features to output embedding space
- * 
- * @param model Pointer to the CLIP Vision model
- * @param image Input pixel array (size: image_size * image_size * 3, normalized [0:1])
- * @param output_embedding Output buffer for features (size: (num_patches+1) * proj_dim)
- */
-void clip_get_image_features(CLIP_Vision_Model* model, float* image, float* output_embedding){
-    int i;
-
-    // 1. Image preprocessing (normalization)
-    float* mean = model->config.image_mean;
-    float* std = model->config.image_std;
-    int image_size = model->config.image_size;
-
-    #pragma omp parallel for private(i)
-    for(i=0; i<image_size*image_size*3; i++){
-        int c = i / (image_size * image_size); // channel index
-        // int x = (i % (image_size * image_size)) / image_size; // x coordinate
-        // int y = (i % (image_size * image_size)) % image_size; // y coordinate
-        float pixel = image[i];
-        pixel = (pixel - mean[c]) / std[c];
-        image[i] = pixel;
-    }
-
-    // 2. Forward
-    clip_vision_forward(model, image, output_embedding);
-
-    // 3. Project
-    int num_patches = (image_size / model->config.patch_size) * (image_size / model->config.patch_size);
-    for(i=0; i < num_patches + 1; i++){
-        float* out = model->state.f + i * model->config.proj_dim; // (proj_dim,) output embedding for this patch
-        float* in = model->state.x + i * model->config.dim; // (dim,) input embedding for this patch
-        float* w = model->weights.w_proj; // (dim, proj_dim) projection matrix
-        matmul(out, in, w, model->config.dim, model->config.proj_dim);
-    }
-}
-/**
- * @brief Extract image features from an image file
- * 
- * Loads an image from the specified file path, preprocesses it (resize, pad, normalize),
- * and runs it through the CLIP Vision model to extract features. The image is:
- * 1. Loaded from file using stb_image
- * 2. Resized maintaining aspect ratio using stb_image_resize
- * 3. Padded to square dimensions (centered)
- * 4. Converted from HWC uint8 to CHW float32 layout
- * 5. Normalized to [0, 1] range
- * 6. Processed through the vision transformer
- * 
- * @param model Pointer to the CLIP Vision model
- * @param image_path Path to the input image file
- * @param output_embedding Output buffer for features (size: (num_patches+1) * proj_dim)
- */
-void clip_get_image_features_from_file(CLIP_Vision_Model* model, const char* image_path, float* output_embedding){
+void clip_preprocess_image_path(CLIP_Vision_Model* model, const char* image_path, float* output_buffer){
     // Load image from file
     int src_img_x, src_img_y, src_img_n;
     unsigned char *data = stbi_load(image_path, &src_img_x, &src_img_y, &src_img_n, 3);
@@ -542,6 +498,7 @@ void clip_get_image_features_from_file(CLIP_Vision_Model* model, const char* ima
         }
     }
     free(resized_data);
+    stbi_image_free(data);
 
     #ifdef DEBUG
     printf("Pixel value:");
@@ -549,12 +506,114 @@ void clip_get_image_features_from_file(CLIP_Vision_Model* model, const char* ima
     printf("\n");
     #endif
 
-    // Process the image through the model
-    clip_get_image_features(model, pixel_values, output_embedding);
-    
+    // Normalize pixel values using model's mean and std
+    float* mean = model->config.image_mean;
+    float* std = model->config.image_std;
+    int image_size = model->config.image_size;
+
+    int i;
+    #pragma omp parallel for private(i)
+    for(i=0; i<image_size*image_size*3; i++){
+        int c = i / (image_size * image_size); // channel index
+        float pixel = pixel_values[i];
+        pixel = (pixel - mean[c]) / std[c];
+        output_buffer[i] = pixel;
+    }
+
     // Cleanup
     free(pixel_values);
-    stbi_image_free(data);
+}
+
+
+/**
+ * @brief Extract image features from a pixel array
+ * 
+ * Processes a pre-loaded image (as pixel array) through the CLIP Vision model.
+ * The input image should be in range [0, 1] and will be normalized using the
+ * model's mean and std values. The function:
+ * 1. Normalizes the pixel values
+ * 2. Runs forward pass through the vision transformer
+ * 3. Projects features to output embedding space
+ * 
+ * @param model Pointer to the CLIP Vision model
+ * @param image Input pixel array (size: image_size * image_size * 3, normalized [0:1])
+ * @param output_embedding Output buffer for features (size: (num_patches+1) * proj_dim)
+ */
+void clip_get_image_features(CLIP_Vision_Model* model, float* image, float* output_embedding){
+    int i;
+
+    // 1. Image preprocessing (normalization)
+    float* mean = model->config.image_mean;
+    float* std = model->config.image_std;
+    int image_size = model->config.image_size;
+
+    #pragma omp parallel for private(i)
+    for(i=0; i<image_size*image_size*3; i++){
+        int c = i / (image_size * image_size); // channel index
+        // int x = (i % (image_size * image_size)) / image_size; // x coordinate
+        // int y = (i % (image_size * image_size)) % image_size; // y coordinate
+        float pixel = image[i];
+        pixel = (pixel - mean[c]) / std[c];
+        image[i] = pixel;
+    }
+
+    // 2. Forward
+    clip_vision_forward(model, image, NULL);
+
+    // 3. Project
+    int num_patches = (image_size / model->config.patch_size) * (image_size / model->config.patch_size);
+    for(i=0; i < num_patches + 1; i++){
+        float* out = model->state.f + i * model->config.proj_dim; // (proj_dim,) output embedding for this patch
+        float* in = model->state.x + i * model->config.dim; // (dim,) input embedding for this patch
+        float* w = model->weights.w_proj; // (dim, proj_dim) projection matrix
+        matmul(out, in, w, model->config.dim, model->config.proj_dim);
+    }
+
+    // 4. Copy output to output_embedding
+    if(output_embedding){
+        memcpy(output_embedding, model->state.f, sizeof(float) * (num_patches + 1) * model->config.proj_dim);
+    }
+}
+/**
+ * @brief Extract image features from an image file
+ * 
+ * Loads an image from the specified file path, preprocesses it (resize, pad, normalize),
+ * and runs it through the CLIP Vision model to extract features. The image is:
+ * 1. Loaded from file using stb_image
+ * 2. Resized maintaining aspect ratio using stb_image_resize
+ * 3. Padded to square dimensions (centered)
+ * 4. Converted from HWC uint8 to CHW float32 layout
+ * 5. Normalized to [0, 1] range
+ * 6. Processed through the vision transformer
+ * 
+ * @param model Pointer to the CLIP Vision model
+ * @param image_path Path to the input image file
+ * @param output_embedding Output buffer for features (size: (num_patches+1) * proj_dim)
+ */
+void clip_get_image_features_from_file(CLIP_Vision_Model* model, const char* image_path, float* output_embedding){
+    int i;
+    // 1. Preprocess image and get pixel values
+    int image_size = model->config.image_size;
+    float* pixel_values = (float*)calloc(image_size * image_size * 3, sizeof(float));
+    clip_preprocess_image_path(model, image_path, pixel_values);
+
+    // 2. Forward
+    clip_vision_forward(model, pixel_values, NULL);
+    free(pixel_values);
+
+    // 3. Project
+    int num_patches = (image_size / model->config.patch_size) * (image_size / model->config.patch_size);
+    for(i=0; i < num_patches + 1; i++){
+        float* out = model->state.f + i * model->config.proj_dim; // (proj_dim,) output embedding for this patch
+        float* in = model->state.x + i * model->config.dim; // (dim,) input embedding for this patch
+        float* w = model->weights.w_proj; // (dim, proj_dim) projection matrix
+        matmul(out, in, w, model->config.dim, model->config.proj_dim);
+    }
+
+    // 4. Copy output to output_embedding
+    if(output_embedding){
+        memcpy(output_embedding, model->state.f, sizeof(float) * (num_patches + 1) * model->config.proj_dim);
+    }
 }
 
 /**
@@ -988,12 +1047,14 @@ void clip_vision_forward(CLIP_Vision_Model* model, float* patches, float* output
     #endif
 
     // 4. Post-layernorm
-    for(int i=0; i < num_patches + 1; i++){
-        float* in = &model->state.x[i * model->config.dim];
-        float* out = &model->state.x[i * model->config.dim];
-        float* w_ln = model->weights.w_post_ln;
-        float* b_ln = model->weights.b_post_ln;
-        layernorm(out, in, w_ln, b_ln, model->config.dim, model->config.layer_norm_epsilon);
+    if(model->weights.w_post_ln && model->weights.b_post_ln){
+        for(int i=0; i < num_patches + 1; i++){
+            float* in = &model->state.x[i * model->config.dim];
+            float* out = &model->state.x[i * model->config.dim];
+            float* w_ln = model->weights.w_post_ln;
+            float* b_ln = model->weights.b_post_ln;
+            layernorm(out, in, w_ln, b_ln, model->config.dim, model->config.layer_norm_epsilon);
+        }
     }
     #ifdef DEBUG
     printf("After Post-LN[%d]:", log_idx);
@@ -1002,4 +1063,59 @@ void clip_vision_forward(CLIP_Vision_Model* model, float* patches, float* output
     for(int i = model->config.dim-5; i<model->config.dim; i++) printf(" %f", model->state.x[log_idx * model->config.dim + i]);
     printf("\n");
     #endif
+
+    // 5. Copy output embedding to output buffer if provided
+    if(output_embedding){
+        memcpy(output_embedding, model->state.x, (num_patches + 1) * model->config.dim * sizeof(float));
+    }
+}
+
+
+void clip_vision_forward_early_exit(CLIP_Vision_Model* model, float* patches, float* output_embedding, int exit_layer){
+    int num_patches =(model->config.image_size / model->config.patch_size) * (model->config.image_size / model->config.patch_size);
+    // 1. Embedding
+    clip_vision_embedding_forward(model, patches);
+    #ifdef DEBUG // OK
+    int log_idx = 1;
+    printf("After Embedding[%d]:", log_idx);
+    for(int i = 0; i<5; i++) printf(" %f", model->state.x[log_idx * model->config.dim + i]);
+    printf(" ... ");
+    for(int i = model->config.dim-5; i<model->config.dim; i++) printf(" %f", model->state.x[log_idx * model->config.dim + i]);
+    printf("\n");
+    #endif
+
+    // 2. Pre-layernorm
+    for(int i=0; i < num_patches + 1; i++){
+        float* in = &model->state.x[i * model->config.dim];
+        float* out = &model->state.x[i * model->config.dim];
+        float* w_ln = model->weights.w_pre_ln;
+        float* b_ln = model->weights.b_pre_ln;
+        layernorm(out, in, w_ln, b_ln, model->config.dim, model->config.layer_norm_epsilon);
+    }
+    #ifdef DEBUG // OK
+    printf("After Pre-LN[%d]:", log_idx);
+    for(int i = 0; i<5; i++) printf(" %f", model->state.x[log_idx * model->config.dim + i]);
+    printf(" ... ");
+    for(int i = model->config.dim-5; i<model->config.dim; i++) printf(" %f", model->state.x[log_idx * model->config.dim + i]);
+    printf("\n");
+    #endif
+
+    // 3. Encoder
+    for(int i=0; i<model->config.n_layers; i++){
+        #ifdef DEBUG
+        printf("Entering Encoder Layer %d\n", i);
+        #endif
+        clip_vision_encoder_layer_forward(model, i);
+        if (i == exit_layer){
+            #ifdef DEBUG
+            printf("Early exit at layer %d\n", i);
+            #endif
+            break;
+        }
+    }
+
+    // 4. Copy output embedding to output buffer if provided
+    if(output_embedding){
+        memcpy(output_embedding, model->state.x, (num_patches + 1) * model->config.dim * sizeof(float));
+    }
 }

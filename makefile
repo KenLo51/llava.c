@@ -24,6 +24,7 @@ OBJECTS_RELEASE = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/release/%.o,$(SOURCES))
 # Target executables
 TARGET_RUN_CLIP = $(BUILD_DIR)/run_clip
 TARGET_RUN_PHI3 = $(BUILD_DIR)/run_phi3
+TARGET_RUN_LLAVA_PHI3 = $(BUILD_DIR)/run_llava_phi3
 
 # Compiler flags
 CFLAGS = -std=c11 -fopenmp -I$(INC_DIR) -Wall
@@ -38,7 +39,7 @@ all: release
 
 # Release build
 .PHONY: release
-release: $(TARGET_RUN_CLIP) $(TARGET_RUN_PHI3)
+release: $(TARGET_RUN_CLIP) $(TARGET_RUN_PHI3) $(TARGET_RUN_LLAVA_PHI3)
 
 # Build run_clip executable
 $(TARGET_RUN_CLIP): $(OBJECTS_RELEASE) $(OBJ_DIR)/release/run_clip.o
@@ -60,6 +61,17 @@ $(OBJ_DIR)/release/run_phi3.o: $(EXAMPLES_DIR)/run_phi3.c
 	@mkdir -p $(OBJ_DIR)/release
 	$(CC) $(CFLAGS_RELEASE) -c $< -o $@
 
+# Build run_llava_phi3 executable
+$(TARGET_RUN_LLAVA_PHI3): $(OBJECTS_RELEASE) $(OBJ_DIR)/release/run_llava_phi3.o
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(OBJECTS_RELEASE) $(OBJ_DIR)/release/run_llava_phi3.o -o $@ $(LDFLAGS)
+	@echo "Built release executable: $@"
+
+$(OBJ_DIR)/release/run_llava_phi3.o: $(EXAMPLES_DIR)/run_llava_phi3.c
+	@mkdir -p $(OBJ_DIR)/release
+	$(CC) $(CFLAGS_RELEASE) -c $< -o $@
+
+
 # Compile shared source files
 $(OBJ_DIR)/release/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(OBJ_DIR)/release
@@ -71,6 +83,9 @@ run_clip: $(TARGET_RUN_CLIP)
 
 .PHONY: run_phi3
 run_phi3: $(TARGET_RUN_PHI3)
+
+.PHONY: run_llava_phi3
+run_llava_phi3: $(TARGET_RUN_LLAVA_PHI3)
 
 # Clean build artifacts
 .PHONY: clean
@@ -85,6 +100,7 @@ help:
 	@echo "  all         - Build all targets (default)"
 	@echo "  run_clip    - Build run_clip executable"
 	@echo "  run_phi3    - Build run_phi3 executable"
-	@echo "  release     - Build both executables"
+	@echo "  run_llava_phi3 - Build run_llava_phi3 executable"
+	@echo "  release     - Build all executables"
 	@echo "  clean       - Clean build directory"
 	@echo "  help        - Show this help message"

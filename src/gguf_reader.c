@@ -370,6 +370,10 @@ gguf_context* gguf_init_from_file_ex(const char* filename, bool load_tensors) {
         free(ctx);
         return NULL;
     }
+    for(int i=0; i<header_size; i++){
+        printf("%02X ", header[i]);
+    }
+    printf("\n");
     
     size_t offset = 0;
     

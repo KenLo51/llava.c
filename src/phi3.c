@@ -248,28 +248,91 @@ Phi3_Model* phi3_init_from_gguf(gguf_context* ctx){
  */
 void phi3_delete(Phi3_Model* phi3){
     if(phi3){
-        free(phi3->weights.token_embedding_table);
-        free(phi3->weights.rms_att_weight);
-        free(phi3->weights.rms_ffn_weight);
-        free(phi3->weights.wqkv);
-        free(phi3->weights.wo);
-        free(phi3->weights.w_up);
-        free(phi3->weights.w_down);
-        free(phi3->weights.rms_final_weight);
-        free(phi3->weights.wcls);
+        if(phi3->weights.token_embedding_table) {
+            free(phi3->weights.token_embedding_table);
+            phi3->weights.token_embedding_table = NULL;
+        }
+        if(phi3->weights.rms_att_weight) {
+            free(phi3->weights.rms_att_weight);
+            phi3->weights.rms_att_weight = NULL;
+        }
+        if(phi3->weights.rms_ffn_weight) {
+            free(phi3->weights.rms_ffn_weight);
+            phi3->weights.rms_ffn_weight = NULL;
+        }
+        if(phi3->weights.wqkv) {
+            free(phi3->weights.wqkv);
+            phi3->weights.wqkv = NULL;
+        }
+        if(phi3->weights.wo) {
+            free(phi3->weights.wo);
+            phi3->weights.wo = NULL;
+        }
+        if(phi3->weights.w_up) {
+            free(phi3->weights.w_up);
+            phi3->weights.w_up = NULL;
+        }
+        if(phi3->weights.w_down) {
+            free(phi3->weights.w_down);
+            phi3->weights.w_down = NULL;
+        }
+        if(phi3->weights.rms_final_weight) {
+            free(phi3->weights.rms_final_weight);
+            phi3->weights.rms_final_weight = NULL;
+        }
+        if(phi3->weights.wcls) {
+            free(phi3->weights.wcls);
+            phi3->weights.wcls = NULL;
+        }
 
-        free(phi3->state.x);
-        free(phi3->state.xb);
-        free(phi3->state.xb2);
-        free(phi3->state.hb);
-        free(phi3->state.hb2);
-        free(phi3->state.q);
-        free(phi3->state.k);
-        free(phi3->state.v);
-        free(phi3->state.att);
-        free(phi3->state.logits);
-        free(phi3->state.key_cache);
-        free(phi3->state.value_cache);
+        if(phi3->state.x) {
+            free(phi3->state.x);
+            phi3->state.x = NULL;
+        }
+        if(phi3->state.xb) {
+            free(phi3->state.xb);
+            phi3->state.xb = NULL;
+        }
+        if(phi3->state.xb2) {
+            free(phi3->state.xb2);
+            phi3->state.xb2 = NULL;
+        }
+        if(phi3->state.hb) {
+            free(phi3->state.hb);
+            phi3->state.hb = NULL;
+        }
+        if(phi3->state.hb2) {
+            free(phi3->state.hb2);
+            phi3->state.hb2 = NULL;
+        }
+        if(phi3->state.q) {
+            free(phi3->state.q);
+            phi3->state.q = NULL;
+        }
+        if(phi3->state.k) {
+            free(phi3->state.k);
+            phi3->state.k = NULL;
+        }
+        if(phi3->state.v) {
+            free(phi3->state.v);
+            phi3->state.v = NULL;
+        }
+        if(phi3->state.att) {
+            free(phi3->state.att);
+            phi3->state.att = NULL;
+        }
+        if(phi3->state.logits) {
+            free(phi3->state.logits);
+            phi3->state.logits = NULL;
+        }
+        if(phi3->state.key_cache) {
+            free(phi3->state.key_cache);
+            phi3->state.key_cache = NULL;
+        }
+        if(phi3->state.value_cache) {
+            free(phi3->state.value_cache);
+            phi3->state.value_cache = NULL;
+        }
 
         free(phi3);
     }
@@ -706,6 +769,43 @@ float* phi3_forward(Phi3_Model* phi3, int token, int pos){
     // 1. Embedding lookup
     float* content_row = weight->token_embedding_table + token * dim;
     memcpy(x, content_row, dim * sizeof(float));
+    
+    // 2. Forward all layers
+    for (int l = 0; l < config->n_layers; l++) {
+        phi3_decoder_layer_forward(phi3, l, pos);
+    }
+    
+    // 3. Final RMSNorm
+    rmsnorm_inplace(x, weight->rms_final_weight, dim);
+
+    // 4. Output projection to logits
+    matmul(state->logits, x, weight->wcls, dim, config->vocab_size);
+    
+    return state->logits;
+}
+
+
+/**
+ * @brief Run forward pass through the entire transformer for a single token, starting from an embedding vector instead of a token ID
+ * 
+ * This function allows you to provide a precomputed embedding vector as input,
+ * which is used in llava that needs to concatenate image features with token embeddings before feeding into the transformer. 
+ * The rest of the forward pass is the same as phi3_forward.
+ * 
+ * @param phi3 Pointer to transformer model
+ * @param embedding Input embedding vector (dim,)
+ * @param pos Current position in the sequence
+ * @return Pointer to logits array for next token prediction
+ */
+float* phi3_forward_embed(Phi3_Model* phi3, float* embedding, int pos){
+    Phi3_Config* config = &phi3->config;
+    Phi3_Weights* weight = &phi3->weights;
+    Phi3_RunState* state = &phi3->state;
+    float* x = state->x;
+    int dim = config->dim;
+    
+    // 1. Use provided embedding instead of doing an embedding lookup
+    memcpy(x, embedding, dim * sizeof(float));
     
     // 2. Forward all layers
     for (int l = 0; l < config->n_layers; l++) {
